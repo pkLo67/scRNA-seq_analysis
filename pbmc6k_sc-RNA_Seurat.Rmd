@@ -1,0 +1,166 @@
+---
+title: "Single-Cell RNA-Seq Analysis"
+author: "Pang-Kuo Lo"
+date: "11/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Single-Cell RNA-Seq Data Analysis using Seurat
+
+The "Seurat" library package developed by Satija Lab is a useful R-based tool for single-cell genomics analysis. Seurat is used here to analyze the single-cell RNA-seq pbmc6k dataset. The pbmc6k dataset can be downloaded from the resources of the 10X genomics website.
+
+```{r C1, message=FALSE, warning=FALSE}
+# Load the required library packages
+library(Seurat)
+library(dplyr)
+```
+
+The first step is to use the Read10X syntax from Seurat to read the pbmc6k dataset including barcodes.tsv, genes.tsv and matrix.mtx.
+
+```{r C2, message=FALSE, warning=FALSE}
+pbmc.data <- Read10X(data.dir = "/Users/Pang-Kuo/Desktop/NGS_ML_Analysis/single_cell_RNA-seq_analysis/pbmc6k/hg19", gene.column = 2)
+```
+
+The second step is to create a Seurat object using the CreateSeuratObject syntax.
+
+```{r C3, message=FALSE, warning=FALSE}
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc", min.cells = 3, min.features = 200)
+```
+
+The third step is to calculate the percentage of detected mitochondrial genes.
+
+```{r C4, echo=TRUE, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.3)
+```
+
+The fourth step is to perform feature scatter plot analysis of the pbmc dataset using the FeatureScatter syntax.
+
+```{r C5, echo=TRUE, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+
+The fifth step is to use the subset syntax to remove cells with a too low or too high gene count and cells with a 
+significant mitochondrial gene count (indicative of non-viable cells).
+
+```{r C6, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 1800 & percent.mt < 5)
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.3)
+```
+
+The sixth step is to perform normalization and identify variable expressed genes.
+
+```{r C7, echo=TRUE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(pbmc), 10)
+top10
+# Perform feature plot analysis of variable expressed genes
+plot1 <- VariableFeaturePlot(pbmc)
+LabelPoints(plot = plot1, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+```
+
+The seventh step is to perform linear scaling and run Principal Component Analysis (PCA) for dimensionality reduction.
+
+```{r C8, message=FALSE, warning=FALSE}
+pbmc <- ScaleData(pbmc)
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+```
+
+
+```{r C9, echo=TRUE, message=FALSE, warning=FALSE}
+# VizDimLoadings analysis
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca")
+```
+
+
+```{r C10, echo=TRUE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+# PCA plot analysis
+DimPlot(pbmc, reduction = "pca", pt.size = 0.7)
+```
+
+
+```{r C11, echo=TRUE, fig.height=6, fig.width=9, message=FALSE, warning=FALSE}
+# DimHeatmap analysis
+DimHeatmap(pbmc, dims = 1:6, cells = 500, balanced = TRUE)
+```
+
+
+```{r C12, echo=TRUE, message=FALSE, warning=FALSE}
+# ElbowPlot analysis
+ElbowPlot(pbmc)
+```
+
+
+The eighth step is to perform neighboring and clustering analysis.
+
+```{r C13, message=FALSE, warning=FALSE}
+pbmc <- FindNeighbors(pbmc, dims = 1:15)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+```
+
+
+The ninth step is to perform Uniform Manifold Approximation and Projection (UMAP) analysis for dimensionality reduction.
+
+```{r C14, echo=TRUE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+pbmc <- RunUMAP(pbmc, dims = 1:15)
+DimPlot(pbmc, reduction = "umap", pt.size = 0.7)
+```
+
+The tenth step is to identify cell-type-specific gene markers using the FindMarkers syntax.
+
+```{r C15, echo=TRUE, message=FALSE, warning=FALSE}
+cluster_markers <- vector("list", 9)
+names(cluster_markers) <- c(paste0("Cluster_",c(seq(1:9)-1)))
+cluster_num <- c(seq(1:9)-1)
+for (i in 1:9) {
+  cluster_markers[[i]] <- FindMarkers(pbmc, ident.1 = cluster_num[i], min.pct = 0.25)
+}
+for (i in 1:9) {
+  print(names(cluster_markers[i])); print(head(cluster_markers[[i]],8))
+}
+```
+
+
+The eleventh step is to visualize expression of cell-type-specific gene markers in UMAP plots and VlnPlots.
+
+```{r C16, echo=TRUE, fig.height=8, fig.width=9, message=FALSE, warning=FALSE}
+# Visualization of cell-type-specific gene markers in UMAP plots
+cell_type_markers <- c("CD3D", "CD4", "CD8A", "CD14", "CD79A", "FCGR3A", "GNLY", "FCER1A", "PPBP")
+FeaturePlot(pbmc, features = cell_type_markers)
+
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(pbmc, features = cell_type_markers, slot = "counts", log = TRUE)
+```
+
+
+The final step is to annotate identified cell clusters with cell type names in the UMAP plot.
+
+```{r C17, echo=TRUE, message=FALSE, warning=FALSE}
+pbmc <- RenameIdents(pbmc, `0` = "Naive CD4+ T", `1` = "Memmory CD4+ T", `2` = "CD8+ T", `3` = "CD14+ Mono", `4` = "B", `5` = "FCGR3A+ Mono", `6` = "NK", `7` = "DC", `8` = "Platelet")
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.7)
+```
+
+
+Heatmap analysis is performed to display differentially expressed genes in every cell type.
+
+```{r C18, echo=TRUE, fig.height=7, fig.width=9, message=FALSE, warning=FALSE}
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+pbmc.markers %>% group_by(cluster) %>% top_n(n = 4, wt = avg_logFC)
+top10 <- pbmc.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+DoHeatmap(pbmc, features = top10$gene, size = 3) + NoLegend()
+```
+
+
+Here is the output of sessionInfo() on the system on which this document was compiled:
+
+```{r C19, message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
