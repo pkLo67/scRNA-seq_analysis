@@ -10,6 +10,7 @@ library(DT)
 
 ## Paste the File Path (e.g. "/Users/username/Desktop/folder1/folder2/folder3") into the App 
 ## before you click on "Start Analysis"
+## The last folder should contain matrix, index and gene feature files.
 ## Enter "gene names" to display the Gene Feature Plot and Gene VlnPlot.
 ## Annotated plots can be displayed after cell cluster IDs are renamed.
 ## Be patient in waiting for the output results as some code execution need longer computing time.
@@ -131,7 +132,7 @@ ui <- fluidPage(
 # Define server logic required to generate plots and tables
 server <- function(input, output) {
   # Paste the file path into the entry block and click the "Start Analysis" bottom to start analysis.
-  # The last folder should contain matrix, index and feature files.
+  # The last folder should contain matrix, index and gene feature files.
   rawdata <- eventReactive(input$start, {
     Read10X(data.dir = input$file_path, gene.column = 2)
   })
