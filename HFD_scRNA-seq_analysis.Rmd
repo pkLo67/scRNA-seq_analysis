@@ -1,0 +1,720 @@
+---
+title: "Single-cell scRNA-seq analysis of HFD vs. RD"
+author: "Pang-Kuo Lo"
+date: "2/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Single-Cell RNA-seq Reveals Obesity-Induced Alterations in the Brca1-Mutated Mammary Gland Microenvironment
+
+The following R scripts were used to analyze the single-cell RNA sequencing data published in the following paper:
+
+Lo, P. K., Yao, Y., & Zhou, Q. (2020). Single-Cell RNA-seq Reveals Obesity-Induced Alterations in the Brca1-Mutated Mammary Gland Microenvironment. Cancers, 12(8), 2235. https://doi.org/10.3390/cancers12082235
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(cowplot)
+library(ggplot2)
+library(rafalib)
+```
+
+
+The scRNA-seq raw datasets have been deposited in the GEO data repository (GEO accession number: GSE152866[https://0-www-ncbi-nlm-nih-gov.brum.beds.ac.uk/geo/query/acc.cgi?acc=GSE152866]).
+
+
+
+```{r}
+RD_236.data <- Read10X(data.dir="RD_236", gene.column = 2)
+RD_257.data <- Read10X(data.dir="RD_257", gene.column = 2)
+HFD_243.data <- Read10X(data.dir="HFD_243", gene.column = 2)
+HFD_245.data <- Read10X(data.dir="HFD_245", gene.column = 2)
+```
+
+
+The second step is to create their respective Seurat objects.
+
+```{r message=FALSE, warning=FALSE}
+# Create a function for converting matrix data into a Seurat object
+Seurat_object <- function(matrix, object_name) {
+  object <- CreateSeuratObject(counts = matrix, project = object_name, min.cells = 5)
+  object$INT <- object_name
+  object <- subset(object, subset = nFeature_RNA > 500)
+  object <- NormalizeData(object, verbose = FALSE)
+  object <- FindVariableFeatures(object, selection.method = "vst", nfeatures = 2000)
+  return(object)
+}
+
+# Use the Seurat_object function to create Seurat objects
+RD_236 <- Seurat_object(RD_236.data, "RD")
+RD_257 <- Seurat_object(RD_257.data, "RD")
+HFD_243 <- Seurat_object(HFD_243.data, "HFD")
+HFD_245 <- Seurat_object(HFD_245.data, "HFD")
+```
+
+
+The third step is to perform integration for creating an integrated Seurat object.
+
+```{r message=FALSE, warning=FALSE}
+#Perform integration
+RD_HFD.anchors <- FindIntegrationAnchors(object.list = list(RD_236, RD_257, HFD_243, HFD_245), dims = 1:15)
+RD_HFD <- IntegrateData(anchorset = RD_HFD.anchors, dims = 1:15)
+```
+
+
+The fourth step is to scale and center the data and perform a PCA analysis.
+
+```{r message=FALSE, warning=FALSE}
+DefaultAssay(RD_HFD) <- "integrated"
+RD_HFD <- ScaleData(RD_HFD, verbose = FALSE)
+RD_HFD <- RunPCA(RD_HFD, npcs = 15, verbose = FALSE)
+```
+
+
+PCA plots can be created using the DimPlot function syntax.
+
+```{r fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+PCAPlot(RD_HFD, split.by = "INT", pt.size = 0.8)
+```
+
+
+The fifth step is to perform clustering.
+
+```{r message=FALSE, warning=FALSE}
+RD_HFD <- FindNeighbors(RD_HFD, reduction = "pca", dims = 1:15)
+RD_HFD <- FindClusters(RD_HFD, resolution = 0.5)
+```
+
+
+The sixth step is to perform t-SNE analysis.
+
+```{r}
+RD_HFD <- RunTSNE(RD_HFD, reduction = "pca", dims = 1:15)
+```
+
+
+```{r fig.height=4, fig.width=8}
+TSNEPlot(RD_HFD, split.by = "INT", label = T, pt.size = 0.8)
+```
+
+
+The seventh step is to perform UMAP analysis.
+
+```{r message=FALSE, warning=FALSE}
+RD_HFD <- RunUMAP(RD_HFD, reduction = "pca", dims = 1:15)
+```
+
+
+```{r fig.height=4, fig.width=8}
+UMAPPlot(RD_HFD, split.by = "INT", label = T, pt.size = 0.8)
+```
+
+
+The eighth step is to identify conserved cell-type-specific gene markers.
+
+```{r}
+DefaultAssay(RD_HFD) <- "RNA"
+```
+
+
+```{r message=FALSE, warning=FALSE}
+## Create an empty list for storing the output data of differentially expressed gene markers
+gene_markers <- vector("list", 14)      
+clust_num <- c(seq(1:14)-1)
+names(gene_markers) <- paste0("c", c(seq(1:14)-1), "_markers")     
+
+# Store differentially expressed genes in each cell cluster in the gene_markers list
+for (i in 1:14) {
+  gene_markers[[i]] <- FindConservedMarkers(RD_HFD, ident.1 = clust_num[i], grouping.var = "INT", verbose = FALSE)
+}
+```
+
+
+Print the top 5 representative marker genes for cell clusters
+
+```{r}
+for (i in 1:14) {
+  print(names(gene_markers[i]));print(head(gene_markers[[i]],5)[,c(2,5,7,10,12,15,17,20)])
+}
+```
+
+```{r}
+gene_markers_list <- as.data.frame(matrix(nrow=0, ncol=8))
+colnames(gene_markers_list) <- names(gene_markers[[1]][c(2,5,7,10,12,15,17,20)])
+
+for (i in 1:14) {
+  gene_markers_list <- rbind(gene_markers_list, gene_markers[[i]][1:20,c(2,5,7,10,12,15,17,20)])
+}
+
+gene_markers_list <- gene_markers_list[, c(5,6,1,2,7,8,3,4)]
+gene_markers_list$cluster_n <- rep((1:14)-1, each = 20)
+write.csv(gene_markers_list, file = "gene_markers_list_HFD_scRNA-seq.csv")
+```
+
+
+Annotate the cell clusters
+
+```{r}
+RD_HFD2 <- RD_HFD
+RD_HFD2 <- RenameIdents(RD_HFD2, `0` = "C1", `1` = "C2", `2` = "C3", `3` = "C4", `4` = "C5", `5` = "C6", `6` = "C7",
+                        `7` = "C8", `8` = "C9", `9` = "C10", `10` = "C11", `11` = "C12", `12` = "C13", `13` = "C14")
+```
+
+
+```{r fig.height=5, fig.width=6}
+TSNEPlot(RD_HFD2, label = T, pt.size = 0.8)
+```
+
+
+Visualize expression of cell-type-specific gene markers in VlnPlots
+
+```{r fig.height=14, fig.width=12}
+# Set gene marker list
+cell_type_markers <- c("Tnfaip6", "Igfbp5", "Cd3d", "Jun", "Tnip3", "Gzma", "Cd79a",
+                       "Rgcc", "C1qb", "Lef1", "Klf2", "Clec4e", "Siglech", "Ccnb2", "Cd14", "Ccr5", "Cd163", "Cd68")
+                       
+
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(RD_HFD2, features = cell_type_markers, slot = "counts", log = TRUE, ncol = 3, pt.size = 0.7)
+```
+
+
+
+
+Visualize expression of cell-type-specific gene markers in t-SNE plots
+
+
+
+
+The final step is to analyze differential expressed genes in a specific cell cluster/type across conditions using the FindMarkers syntax.
+
+```{r}
+RD_HFD2$diet.INT <- paste(Idents(RD_HFD2), RD_HFD2$INT, sep = "_")
+RD_HFD2$diet <- Idents(RD_HFD2)
+RD_HFD3 <- RD_HFD2
+Idents(RD_HFD3) <- "diet.INT"
+```
+
+
+```{r}
+C1_DEG <- FindMarkers(RD_HFD3, ident.1 = "C1_HFD", ident.2 = "C1_RD", verbose = FALSE)
+C1_DEG.sorted <- C1_DEG[order(C1_DEG$avg_logFC, decreasing = TRUE),]
+
+write.csv(C1_DEG.sorted[c(1,2,5)], file = "stroma_C1_HFD-RD.csv")
+```
+
+```{r}
+head(C1_DEG.sorted, 10)
+tail(C1_DEG.sorted, 10)
+```
+
+
+```{r}
+C2_DEG <- FindMarkers(RD_HFD3, ident.1 = "C2_HFD", ident.2 = "C2_RD", verbose = FALSE)
+C2_DEG.sorted <- C2_DEG[order(C2_DEG$avg_logFC, decreasing = TRUE),]
+head(C2_DEG.sorted)
+tail(C2_DEG.sorted)
+write.csv(C2_DEG.sorted[c(1,2,5)], file = "stroma_C2_HFD-RD.csv")
+```
+
+```{r}
+head(C2_DEG.sorted, 10)
+tail(C2_DEG.sorted, 10)
+```
+
+
+```{r}
+C4_DEG <- FindMarkers(RD_HFD3, ident.1 = "C4_HFD", ident.2 = "C4_RD", verbose = FALSE)
+C4_DEG.sorted <- C4_DEG[order(C4_DEG$avg_logFC, decreasing = TRUE),]
+head(C4_DEG.sorted)
+tail(C4_DEG.sorted)
+write.csv(C4_DEG.sorted[c(1,2,5)], file = "stroma_C4_HFD-RD.csv")
+```
+
+```{r}
+head(C4_DEG.sorted, 10)
+tail(C4_DEG.sorted, 10)
+```
+
+
+```{r}
+C8_DEG <- FindMarkers(RD_HFD3, ident.1 = "C8_HFD", ident.2 = "C8_RD", verbose = FALSE)
+C8_DEG.sorted <- C8_DEG[order(C8_DEG$avg_logFC, decreasing = TRUE),]
+head(C8_DEG.sorted)
+tail(C8_DEG.sorted)
+write.csv(C8_DEG.sorted[c(1,2,5)], file = "stroma_C8_HFD-RD.csv")
+```
+
+
+```{r}
+head(C8_DEG.sorted, 10)
+tail(C8_DEG.sorted, 10)
+```
+
+
+```{r}
+C11_DEG <- FindMarkers(RD_HFD3, ident.1 = "C11_HFD", ident.2 = "C11_RD", verbose = FALSE)
+C11_DEG.sorted <- C11_DEG[order(C11_DEG$avg_logFC, decreasing = TRUE),]
+
+write.csv(C11_DEG.sorted[c(1,2,5)], file = "stroma_C11_HFD-RD.csv")
+```
+
+
+```{r}
+head(C11_DEG.sorted, 25)
+tail(C11_DEG.sorted, 10)
+```
+
+
+
+
+DEG analysis of Memory T cells (C3)
+```{r}
+C3_DEG <- FindMarkers(RD_HFD3, ident.1 = "C3_HFD", ident.2 = "C3_RD", verbose = FALSE)
+C3_DEG.sorted <- C3_DEG[order(C3_DEG$avg_logFC, decreasing = TRUE),]
+head(C3_DEG.sorted)
+tail(C3_DEG.sorted)
+write.csv(C3_DEG.sorted[c(1,2,5)], file = "Memory_T_HFD-RD.csv")
+```
+
+
+
+DEG analysis of Naïve T cells (C10)
+```{r}
+C10_DEG <- FindMarkers(RD_HFD3, ident.1 = "C10_HFD", ident.2 = "C10_RD", verbose = FALSE)
+C10_DEG.sorted <- C10_DEG[order(C10_DEG$avg_logFC, decreasing = TRUE),]
+head(C10_DEG.sorted)
+tail(C10_DEG.sorted)
+write.csv(C10_DEG.sorted[c(1,2,5)], file = "Naive_T_HFD-RD.csv")
+```
+
+
+
+DEG analysis of NK cells (C6)
+```{r}
+C6_DEG <- FindMarkers(RD_HFD3, ident.1 = "C6_HFD", ident.2 = "C6_RD", verbose = FALSE)
+C6_DEG.sorted <- C6_DEG[order(C6_DEG$avg_logFC, decreasing = TRUE),]
+head(C6_DEG.sorted)
+tail(C6_DEG.sorted)
+write.csv(C6_DEG.sorted[c(1,2,5)], file = "NK_cells_HFD-RD.csv")
+```
+
+
+DEG analysis of B cells (C7)
+```{r}
+C7_DEG <- FindMarkers(RD_HFD3, ident.1 = "C7_HFD", ident.2 = "C7_RD", verbose = FALSE)
+C7_DEG.sorted <- C7_DEG[order(C7_DEG$avg_logFC, decreasing = TRUE),]
+head(C7_DEG.sorted)
+tail(C7_DEG.sorted)
+write.csv(C7_DEG.sorted[c(1,2,5)], file = "B_cells_HFD-RD.csv")
+```
+
+
+DEG analysis of Monocytes (C5)
+```{r}
+C5_DEG <- FindMarkers(RD_HFD3, ident.1 = "C5_HFD", ident.2 = "C5_RD", verbose = FALSE)
+C5_DEG.sorted <- C5_DEG[order(C5_DEG$avg_logFC, decreasing = TRUE),]
+head(C5_DEG.sorted,10)
+tail(C5_DEG.sorted)
+write.csv(C5_DEG.sorted[c(1,2,5)], file = "Monocytes_HFD-RD.csv")
+```
+
+
+DEG analysis of Macrophages (C9)
+```{r}
+C9_DEG <- FindMarkers(RD_HFD3, ident.1 = "C9_HFD", ident.2 = "C9_RD", verbose = FALSE)
+C9_DEG.sorted <- C9_DEG[order(C9_DEG$avg_logFC, decreasing = TRUE),]
+head(C9_DEG.sorted)
+tail(C9_DEG.sorted)
+write.csv(C9_DEG.sorted[c(1,2,5)], file = "Macrophages_HFD-RD.csv")
+```
+
+
+Visualization of differentially expressed genes in UMAP plots.
+
+```{r fig.height=16, fig.width=6.5}
+up_genes <- c("Col3a1", "Eln", "Gm8797", "Igfbp6", "Sparc")
+FeaturePlot(RD_HFD3, reduction = "tsne", features = up_genes, split.by = "INT", max.cutoff = 3, cols = c("grey", "red"))
+```
+
+
+```{r fig.height=12, fig.width=6.5}
+down_genes <- c("Iigp1", "Cxcl10", "Ccl2", "Igf1")
+FeaturePlot(RD_HFD3, reduction = "tsne", features = down_genes, split.by = "INT", max.cutoff = 3, cols = c("grey", "red"))
+```
+
+
+
+```{r fig.height=21, fig.width=6}
+up_genes <- c("S100a6", "Lgals1", "Pf4", "Lpl", "Ccl6", "Retnla", "Folr2")
+FeaturePlot(RD_HFD3, reduction = "tsne", features = up_genes, split.by = "INT", max.cutoff = 3, 
+            cols = c("grey", "red"))
+```
+
+
+```{r fig.height=14, fig.width=6}
+up_genes <- c("Itga6", "Cd3d", "Cd4", "Il2ra", "Foxp3")
+FeaturePlot(RD_HFD3, reduction = "tsne", features = up_genes, split.by = "INT", max.cutoff = 3, 
+            cols = c("grey", "red"))
+```
+
+
+
+The AverageExpression syntax can be used to compute the average expression of genes in a specific cell cluster accross different conditions.
+
+```{r}
+C1_cluster <- subset(RD_HFD2, idents = "C1")
+Idents(C1_cluster) <- "INT"
+avg.C1_cluster <- log1p(AverageExpression(C1_cluster, verbose = FALSE)$RNA)
+avg.C1_cluster$gene <- rownames(avg.C1_cluster)
+
+C2_cluster <- subset(RD_HFD2, idents = "C2")
+Idents(C2_cluster) <- "INT"
+avg.C2_cluster <- log1p(AverageExpression(C2_cluster, verbose = FALSE)$RNA)
+avg.C2_cluster$gene <- rownames(avg.C2_cluster)
+
+C4_cluster <- subset(RD_HFD2, idents = "C4")
+Idents(C4_cluster) <- "INT"
+avg.C4_cluster <- log1p(AverageExpression(C4_cluster, verbose = FALSE)$RNA)
+avg.C4_cluster$gene <- rownames(avg.C4_cluster)
+
+C8_cluster <- subset(RD_HFD2, idents = "C8")
+Idents(C8_cluster) <- "INT"
+avg.C8_cluster <- log1p(AverageExpression(C8_cluster, verbose = FALSE)$RNA)
+avg.C8_cluster$gene <- rownames(avg.C8_cluster)
+```
+
+
+Differentially expressed genes can be displayed in scatter plots using output data from above.
+
+```{r}
+genes.to.label = c("Col3a1", "Eln", "Gm8797", "Sparc", "Iigp1", "Cxcl10", "Ccl2") 
+p1 <- ggplot(avg.C1_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stromal type 1 fibroblasts") 
+p1 <- LabelPoints(plot = p1, points = genes.to.label, repel = TRUE, xnudge = 0, ynudge = 0) 
+p2 <- ggplot(avg.C2_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stromal type 2 fibroblasts") 
+p2 <- LabelPoints(plot = p2, points = genes.to.label, repel = TRUE, xnudge = 0, ynudge = 0)
+p3 <- ggplot(avg.C4_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stromal type 3 fibroblasts") 
+p3 <- LabelPoints(plot = p3, points = genes.to.label, repel = TRUE, xnudge = 0, ynudge = 0)
+p4 <- ggplot(avg.C8_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stromal type 4 fibroblasts") 
+p4 <- LabelPoints(plot = p4, points = genes.to.label, repel = TRUE, xnudge = 0, ynudge = 0)
+```
+
+```{r fig.height=6, fig.width=6}
+plot_grid(p1, p2, p3, p4, nrow = 2, ncol = 2)
+```
+
+
+```{r}
+C1_cluster <- subset(RD_HFD2, idents = "C1")
+Idents(C1_cluster) <- "INT"
+avg.C1_cluster <- log1p(AverageExpression(C1_cluster, verbose = FALSE)$RNA)
+avg.C1_cluster$gene <- rownames(avg.C1_cluster)
+
+C2_cluster <- subset(RD_HFD2, idents = "C2")
+Idents(C2_cluster) <- "INT"
+avg.C2_cluster <- log1p(AverageExpression(C2_cluster, verbose = FALSE)$RNA)
+avg.C2_cluster$gene <- rownames(avg.C2_cluster)
+
+C4_cluster <- subset(RD_HFD2, idents = "C4")
+Idents(C4_cluster) <- "INT"
+avg.C4_cluster <- log1p(AverageExpression(C4_cluster, verbose = FALSE)$RNA)
+avg.C4_cluster$gene <- rownames(avg.C4_cluster)
+
+C8_cluster <- subset(RD_HFD2, idents = "C8")
+Idents(C8_cluster) <- "INT"
+avg.C8_cluster <- log1p(AverageExpression(C8_cluster, verbose = FALSE)$RNA)
+avg.C8_cluster$gene <- rownames(avg.C8_cluster)
+
+C11_cluster <- subset(RD_HFD2, idents = "C11")
+Idents(C11_cluster) <- "INT"
+avg.C11_cluster <- log1p(AverageExpression(C11_cluster, verbose = FALSE)$RNA)
+avg.C11_cluster$gene <- rownames(avg.C11_cluster)
+```
+
+
+
+
+```{r}
+C3_cluster <- subset(RD_HFD2, idents = "C3")
+Idents(C3_cluster) <- "INT"
+avg.C3_cluster <- log1p(AverageExpression(C3_cluster, verbose = FALSE)$RNA)
+avg.C3_cluster$gene <- rownames(avg.C3_cluster)
+
+C5_cluster <- subset(RD_HFD2, idents = "C5")
+Idents(C5_cluster) <- "INT"
+avg.C5_cluster <- log1p(AverageExpression(C5_cluster, verbose = FALSE)$RNA)
+avg.C5_cluster$gene <- rownames(avg.C5_cluster)
+
+C9_cluster <- subset(RD_HFD2, idents = "C9")
+Idents(C9_cluster) <- "INT"
+avg.C9_cluster <- log1p(AverageExpression(C9_cluster, verbose = FALSE)$RNA)
+avg.C9_cluster$gene <- rownames(avg.C9_cluster)
+```
+
+
+Differentially expressed genes can be displayed in scatter plots using output data from above.
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C1 = c("Col3a1", "Eln", "Igfbp6", "Gm8797", "Sparc", "Col6a2", "Col1a2", "Col6a3", "Iigp1", "Ccl2", "Cxcl10") 
+p_1 <- ggplot(avg.C1_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stroma T1") 
+p_1 <- LabelPoints(plot = p_1, points = genes.C1, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_1 <- ggplot(C1_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Stroma T1 (HFD vs. RD)") + 
+         xlim(c(-2, 2))
+vol_1 <- LabelPoints(plot = vol_1, points = genes.C1, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_1, vol_1, nrow = 1, ncol = 2)
+```
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C2 = c("Col3a1", "Eln", "Gm8797", "Sparc", "Iigp1", "Apoe") 
+p_2 <- ggplot(avg.C2_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stroma T2") 
+p_2 <- LabelPoints(plot = p_2, points = genes.C2, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_2 <- ggplot(C2_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Stroma T2 (HFD vs. RD)") + 
+         xlim(c(-2, 2))
+vol_2 <- LabelPoints(plot = vol_2, points = genes.C2, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_2, vol_2, nrow = 1, ncol = 2)
+```
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C4 = c("Cxcl14", "Eln", "Igfbp6", "Gm8797", "Col6a3", "Col4a1", "Iigp1", "Igf1", "Cxcl10")
+p_4 <- ggplot(avg.C4_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stroma T3") 
+p_4 <- LabelPoints(plot = p_4, points = genes.C4, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_4 <- ggplot(C4_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Stroma T3 (HFD vs. RD)") + 
+         xlim(c(-2, 2))
+vol_4 <- LabelPoints(plot = vol_4, points = genes.C4, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_4, vol_4, nrow = 1, ncol = 2)
+```
+
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C8 = c("Col3a1", "Eln", "Igfbp6", "Gm8797", "Tppp3", "Hmox1", "Clec3b", "S100a6", "Iigp1", "Ccl2")
+p_8 <- ggplot(avg.C8_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stroma T4") 
+p_8 <- LabelPoints(plot = p_8, points = genes.C8, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_8 <- ggplot(C8_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Stroma T4 (HFD vs. RD)") + 
+         xlim(c(-2, 2))
+vol_8 <- LabelPoints(plot = vol_8, points = genes.C8, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_8, vol_8, nrow = 1, ncol = 2)
+```
+
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C11 = c("Col3a1", "Igfbp6", "Ogn")
+p_11 <- ggplot(avg.C3_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Stroma T5") 
+p_11 <- LabelPoints(plot = p_11, points = genes.C11, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_11 <- ggplot(C11_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Stroma T5 (HFD vs. RD)") + 
+         xlim(c(-2.5, 2.5))
+vol_11 <- LabelPoints(plot = vol_11, points = genes.C11, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_11, vol_11, nrow = 1, ncol = 2)
+```
+
+
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C3 = c("S100a6", "Lgals1", "Igkc", "Col3a1") 
+p_3 <- ggplot(avg.C3_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Memory T cells") 
+p_3 <- LabelPoints(plot = p_3, points = genes.C3, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_3 <- ggplot(C3_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Memory T cells (HFD vs. RD)") + 
+         xlim(c(-2.5, 2.5))
+vol_3 <- LabelPoints(plot = vol_3, points = genes.C3, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_3, vol_3, nrow = 1, ncol = 2)
+```
+
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C5 = c("Pf4", "Lpl", "Retnla", "Fn1", "Ccl6") 
+p_5 <- ggplot(avg.C5_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Monocytes") 
+p_5 <- LabelPoints(plot = p_5, points = genes.C5, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_5 <- ggplot(C5_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Monocytes (HFD vs. RD)") + 
+         xlim(c(-1.5, 1.5))
+vol_5 <- LabelPoints(plot = vol_5, points = genes.C5, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_5, vol_5, nrow = 1, ncol = 2)
+```
+
+
+
+```{r fig.height=4, fig.width=9, message=FALSE, warning=FALSE}
+genes.C9 = c("Retnla", "Folr2") 
+p_9 <- ggplot(avg.C9_cluster, aes(RD, HFD)) + geom_point() + ggtitle("Macrophages") 
+p_9 <- LabelPoints(plot = p_9, points = genes.C9, repel = TRUE, xnudge = 0, ynudge = 0)
+vol_9 <- ggplot(C9_DEG, aes(x=avg_logFC, y=-log10(p_val_adj))) + geom_point() + ggtitle("Macrophages (HFD vs. RD)") + 
+         xlim(c(-2.5, 2.5))
+vol_9 <- LabelPoints(plot = vol_9, points = genes.C9, repel = TRUE, xnudge = 0, ynudge = 0)
+plot_grid(p_9, vol_9, nrow = 1, ncol = 2)
+```
+
+
+
+```{r fig.height=16, fig.width=10}
+plots <- VlnPlot(RD_HFD3, features = genes.to.label, slot = "counts", log = TRUE, 
+                 split.by = "INT", group.by = "diet.INT", pt.size = 0, combine = FALSE) 
+CombinePlots(plots = plots, ncol = 1)
+```
+
+
+
+```{r fig.height=10, fig.width=12}
+# Set gene marker list
+cell_type_markers <- c("Crem", "Sell", "Nkg7", "Cd8a", "Cd68", "S100a9", "Cd163", "Cd86", "Socs3", "Retnla", "Tgm2",
+                       "Vim")
+# Visualization of cell-type-specific gene markers in UMAP plots
+FeaturePlot(RD_HFD2, features = cell_type_markers, reduction = "tsne")
+```
+
+
+Annotate the cell clusters
+
+```{r}
+RD_HFD4 <- RD_HFD
+RD_HFD4 <- RenameIdents(RD_HFD4, `0` = "Stroma T1", `1` = "Stroma T2", `2` = "Memory T cells", `3` = "Stroma T3", 
+                        `4` = "Monocytes", `5` = "NK cells", `6` = "B cells", `7` = "Stroma T4", `8` = "Macrophages",
+                         `9` = "Naïve T cells", `10` = "Stroma T5", `11` = "Dermal DCs", `12` = "DCs", `13` = "C14")
+```
+
+
+```{r fig.height=5, fig.width=10}
+TSNEPlot(RD_HFD4, split.by = "INT", label = T, pt.size = 0.8)
+```
+
+
+Visualize expression of cell-type-specific gene markers in VlnPlots
+
+```{r fig.height=19, fig.width=12}
+# Set gene marker list
+cell_type_markers <- c("Tnfaip6", "Igfbp5", "Jun", "Rgcc", "Klf2", 
+                       "Lef1", "Cd3d", "Crem", "Sell", "Cd79a", "Gzma", "Nkg7", 
+                       "Cd14", "Tnip3", "Retnla", "Cd163", "Cd68", "C1qb", "Clec4e", "Siglech", "Ccnb2")
+                       
+
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(RD_HFD4, features = cell_type_markers, slot = "counts", log = TRUE, ncol = 3, pt.size = 0.5)
+```
+
+
+```{r fig.height=15, fig.width=12}
+# Set gene marker list
+cell_type_markers <- c("Vim", "Tnfaip6", "Igfbp5", "Jun", "Rgcc", "Klf2", 
+                       "Lef1", "Cd3d", "Crem", "Sell", "Cd79a", "Gzma", "Nkg7", 
+                       "Cd14", "Tnip3", "Retnla", "Cd163", "Cd68", "C1qb", "Clec4e", "Siglech", "Ccnb2")
+                       
+
+# Visualization of cell-type-specific gene markers in VlnPlots
+FeaturePlot(RD_HFD2, features = cell_type_markers, reduction = "tsne")
+```
+
+
+```{r}
+RD_HFD5 <- RD_HFD4
+RD_HFD5 <- NormalizeData(RD_HFD5, normalization.method = "LogNormalize", scale.factor = 10000)
+RD_HFD5 <- FindVariableFeatures(RD_HFD5, selection.method = "vst", nfeatures = 2000)
+```
+
+
+```{r}
+RD_HFD5 <- ScaleData(RD_HFD5)
+RD_HFD5 <- RunPCA(RD_HFD5, features = VariableFeatures(object = RD_HFD5))
+```
+
+
+```{r}
+RD_HFD5 <- RunTSNE(RD_HFD5, dims = 1:15)
+```
+
+
+```{r}
+TSNEPlot(RD_HFD5, pt.size = 0.7)
+```
+
+
+
+```{r}
+RD_HFD5.markers <- FindAllMarkers(RD_HFD5, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+
+
+```{r}
+library(dplyr)
+RD_HFD5_sf.markers <- subset(RD_HFD5.markers, cluster %in% c("Stroma T1","Stroma T2","Stroma T3","Stroma T4","Stroma T5"))
+```
+
+
+```{r}
+RD_HFD5_sf_filter <- subset(RD_HFD5_sf.markers, avg_logFC >= 0.5 & p_val_adj < 0.001)
+RD_HFD5_sf_filter
+dim(RD_HFD5_sf_filter)
+```
+
+
+```{r}
+
+ST1_markers <- subset(RD_HFD5_sf_filter, cluster == "Stroma T1")
+dim(ST1_markers)
+ST2_markers <- subset(RD_HFD5_sf_filter, cluster == "Stroma T2")
+dim(ST2_markers)
+ST3_markers <- subset(RD_HFD5_sf_filter, cluster == "Stroma T3")
+dim(ST3_markers)
+ST4_markers <- subset(RD_HFD5_sf_filter, cluster == "Stroma T4")
+dim(ST4_markers)
+ST5_markers <- subset(RD_HFD5_sf_filter, cluster == "Stroma T5")
+dim(ST5_markers)
+```
+
+
+
+```{r}
+write.csv(RD_HFD5_sf_filter, "Stroma_markers.csv")
+write.csv(ST1_markers, "Stroma-T1_markers.csv")
+write.csv(ST2_markers, "Stroma-T2_markers.csv")
+write.csv(ST3_markers, "Stroma-T3_markers.csv")
+write.csv(ST4_markers, "Stroma-T4_markers.csv")
+write.csv(ST5_markers, "Stroma-T5_markers.csv")
+```
+
+
+
+
+```{r}
+
+top12 <- RD_HFD5_sf.markers %>% group_by(cluster) %>% top_n(n = 12, wt = avg_logFC)
+dim(top12)
+```
+
+
+```{r}
+RD_HFD5_sf <- subset(RD_HFD5, idents = c("Stroma T1","Stroma T2","Stroma T3","Stroma T4","Stroma T5"))
+```
+
+
+
+```{r fig.height=7, fig.width=10}
+DoHeatmap(RD_HFD5_sf, features = top12$gene, size = 3.5, angle = 40)
+```
+
+
+
+```{r}
+mat_set <- read.csv("matrisome.csv", stringsAsFactors = F)
+head(mat_set)
+mat_genes <- unlist(mat_set$Gene.symbol)
+mat_genes
+```
+
+
+```{r fig.height=14, fig.width=10}
+DoHeatmap(RD_HFD5_sf, features = mat_genes, size = 3.5, angle = 40)
+```
+
+
+
+
